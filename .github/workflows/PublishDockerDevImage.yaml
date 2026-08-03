@@ -16,10 +16,10 @@ jobs:
       - name: Build and push Docker image
         uses: openzim/docker-publish-action@v10
         with:
-          image-name: openzim/maps
+          image-name: openzim/zimwright
           manual-tag: dev
           latest-on-tag: false
-          restrict-to: openzim/maps
+          restrict-to: openzim/zimwright
           registries: ghcr.io
           credentials: |
             GHCRIO_USERNAME=${{ secrets.GHCR_USERNAME }}
@@ -45,5 +45,5 @@ jobs:
     steps:
       - name: Ensure we can start the Docker image
         run: |
-          docker run --rm ghcr.io/openzim/zimit:dev zimit --version
+          docker run --rm ghcr.io/openzim/zimwright:dev zimwright --version
 
