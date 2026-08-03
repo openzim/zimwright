@@ -1,13 +1,13 @@
-# maps2zim
+# zimwright
 
 This scraper is a very minimal tool used to download ZIMs from online URL and push them in the Zimfarm and then CMS and so on.
 
-[![CodeFactor](https://www.codefactor.io/repository/github/openzim/maps/badge)](https://www.codefactor.io/repository/github/openzim/maps)
+[![CodeFactor](https://www.codefactor.io/repository/github/openzim/zimwright/badge)](https://www.codefactor.io/repository/github/openzim/zimwright)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![codecov](https://codecov.io/gh/openzim/maps/branch/main/graph/badge.svg)](https://codecov.io/gh/openzim/maps)
-[![PyPI version shields.io](https://img.shields.io/pypi/v/maps2zim.svg)](https://pypi.org/project/maps2zim/)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/maps2zim.svg)](https://pypi.org/project/maps2zim)
-[![Docker](https://ghcr-badge.egpl.dev/openzim/maps/latest_tag?label=docker)](https://ghcr.io/openzim/maps)
+[![codecov](https://codecov.io/gh/openzim/zimwright/branch/main/graph/badge.svg)](https://codecov.io/gh/openzim/zimwright)
+[![PyPI version shields.io](https://img.shields.io/pypi/v/zimwright.svg)](https://pypi.org/project/zimwright/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/zimwright.svg)](https://pypi.org/project/zimwright)
+[![Docker](https://ghcr-badge.egpl.dev/openzim/zimwright/latest_tag?label=docker)](https://ghcr.io/openzim/zimwright)
 
 ## Installation
 
