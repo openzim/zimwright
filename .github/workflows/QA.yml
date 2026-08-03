@@ -1,0 +1,38 @@
+name: QA
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  check-qa:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: scraper/pyproject.toml
+          architecture: x64
+
+      - name: Install dependencies
+        working-directory: scraper
+        run: |
+          pip install -U pip
+          pip install -e .[qa,scripts,test]
+
+      - name: Check Linting
+        working-directory: scraper
+        run: inv check-lint
+
+      - name: Check Formatting
+        working-directory: scraper
+        run: inv check-format
+
+      - name: Check Type
+        working-directory: scraper
+        run: inv check-type

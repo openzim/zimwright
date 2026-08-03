@@ -1,0 +1,66 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: scraper/pyproject.toml
+          architecture: x64
+
+      - name: Install dependencies (and project)
+        working-directory: scraper
+        run: |
+          pip install -U pip
+          pip install -e .[test,scripts]
+
+      - name: Run the tests
+        working-directory: scraper
+        run: inv coverage --args "-vvv"
+
+      - name: Upload coverage report to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  build_python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: scraper/pyproject.toml
+          architecture: x64
+
+      - name: Ensure we can build Python targets
+        working-directory: scraper
+        run: |
+          pip install -U pip build
+          python3 -m build --sdist --wheel
+
+  build_docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure we can build the Docker image
+        run: |
+          docker build -t testimage .
+
+      - name: Ensure we can start the Docker image
+        run: |
+          docker run --rm testimage
