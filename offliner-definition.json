@@ -1,0 +1,39 @@
+{
+  "offliner_id": "zimwright",
+  "stdOutput": true,
+  "stdStats": true,
+  "flags": {
+    "download_from": {
+      "type": "string",
+      "required": false,
+      "title": "Download URL",
+      "description": "URL where ZIM is currently located and will be downloaded"
+    },
+    "debug": {
+      "type": "boolean",
+      "required": false,
+      "title": "Debug",
+      "description": "Enable verbose output"
+    },
+    "output": {
+      "type": "string",
+      "required": false,
+      "title": "Output Folder",
+      "description": "Output folder for ZIMs. Default: /output",
+      "pattern": "^/output$"
+    },
+    "stats_filename": {
+      "type": "string",
+      "required": false,
+      "title": "Stats Filename",
+      "description": "Scraping progress file. Leave it as `/output/task_progress.json`",
+      "pattern": "^/output/task_progress\\.json$"
+    },
+    "contact_info": {
+      "type": "string",
+      "required": false,
+      "title": "Contact Info",
+      "description": "URL or email which will be set in User-Agent header for web requests"
+    }
+  }
+}
