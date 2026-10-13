@@ -4,13 +4,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from schedule import every
-from zimscraperlib.download import save_large_file
 from zimscraperlib.zim.filesystem import (
     validate_file_creatable,
     validate_folder_writable,
 )
 
 from zimwright.context import Context
+from zimwright.download import save_large_file
 
 context = Context.get()
 logger = context.logger
