@@ -6,15 +6,15 @@ build-backend = "hatchling.build"
 name = "zimwright"
 requires-python = ">=3.14,<3.15"
 description = "Download ZIM file to push to Zimfarm"
-readme = "../README.md"
 dependencies = [
   "zimscraperlib==5.4.1",
   "schedule==1.2.2",
 ]
-dynamic = ["authors", "classifiers", "keywords", "license", "version", "urls"]
+dynamic = ["authors", "classifiers", "keywords", "license", "version", "urls", "readme"]
 
 [tool.hatch.metadata.hooks.openzim-metadata]
 kind = "scraper"
+readme = "../README.md"
 
 [tool.hatch.build.hooks.openzim-build]
 

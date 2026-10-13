@@ -317,6 +317,9 @@ output
 tmp
 extract
 
+# Main README.md copied by hatch when building project locally
+scraper/README.md
+
 # File(s) fetched by hatch-openzim plugin
 scraper/src/maps2zim/assets/mapbox-gl-rtl-text.js
 
