@@ -1,46 +1,123 @@
-"""Download a binary file from its URL, using wget.
+"""Download a binary file from its URL, streaming the response with resume.
 
-This mirrors `zimscraperlib.download.save_large_file`, which does not reliably
-retry interrupted downloads: wget treats non-2xx HTTP responses and host/DNS
-errors as fatal by default and gives up instead of retrying, so a transient
-502/503/504/429 from a flaky server or proxy aborts the whole download (see
-https://github.com/openzim/zimwright/issues/3).
+The previous implementation shelled out to `wget -c` with extra retry flags,
+but wget's retry counter is a budget for the *whole* download, not for
+consecutive failures: a connection that drops every few hundred MB can
+exhaust the retry budget long before the file is complete, even though every
+attempt is correctly resuming (see https://github.com/openzim/zimwright/issues/3).
 
-This is a stopgap copy of `save_large_file` with `--retry-on-http-error` and
-`--retry-on-host-error` added, to confirm the fix works before it lands
-upstream in zimscraperlib. Once released there, this module should be removed
-and callers should go back to `zimscraperlib.download.save_large_file`.
+Here, the retry counter only accumulates on attempts that make *no* progress
+at all. Any attempt that receives at least one byte resets it, since it
+proves the connection and the HTTP range resume are both working, so a
+flaky-but-advancing download is never abandoned early.
 """
 
+import logging
 import pathlib
-import subprocess
+import random
+import time
 
-RETRYABLE_HTTP_ERRORS = "429,500,502,503,504"
+import requests
+
+logger = logging.getLogger(__name__)
+
+HTTP_OK = 200
+RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
+CHUNK_SIZE = 1024 * 1024
+CONNECT_TIMEOUT_SECONDS = 30
+READ_TIMEOUT_SECONDS = 60
+BACKOFF_BASE_SECONDS = 2
+BACKOFF_MAX_SECONDS = 60
+
+
+class DownloadError(Exception):
+    """Raised when a download fails and cannot be retried any further."""
 
 
 def save_large_file(
-    url: str, fpath: pathlib.Path, retries: int = 5, user_agent: str | None = None
+    url: str,
+    fpath: pathlib.Path,
+    retries: int = 5,
+    user_agent: str | None = None,
 ) -> None:
-    """download a binary file from its URL, using wget"""
+    """Download a binary file from its URL, streaming it with resume support.
 
-    command = [
-        "/usr/bin/env",
-        "wget",
-        "-t",
-        f"{retries}",
-        "--retry-connrefused",
-        "--retry-on-host-error",
-        f"--retry-on-http-error={RETRYABLE_HTTP_ERRORS}",
-        "--random-wait",
-        "--progress=dot:giga",
-        "-O",
-        str(fpath),
-        "-c",
-        url,
-    ]
-    if user_agent:
-        command += ["-U", user_agent]
-    subprocess.run(
-        command,
-        check=True,
-    )
+    Retries on connection errors, timeouts, incomplete reads, and HTTP
+    429/500/502/503/504, resuming from the last byte written each time via a
+    `Range` request. `retries` is the number of consecutive attempts that may
+    fail *without making any progress* before giving up; an attempt that
+    writes at least one byte resets this counter.
+    """
+
+    headers = {"User-Agent": user_agent} if user_agent else {}
+    consecutive_failures = 0
+
+    with requests.Session() as session:
+        while True:
+            resume_from = fpath.stat().st_size if fpath.exists() else 0
+            request_headers = dict(headers)
+            if resume_from:
+                request_headers["Range"] = f"bytes={resume_from}-"
+
+            bytes_written = 0
+            error: Exception | None = None
+            try:
+                with session.get(
+                    url,
+                    headers=request_headers,
+                    stream=True,
+                    timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
+                ) as response:
+                    if resume_from and response.status_code == HTTP_OK:
+                        logger.warning(
+                            f"{url} does not support resuming downloads, "
+                            "restarting from scratch"
+                        )
+                        fpath.unlink(missing_ok=True)
+                        resume_from = 0
+
+                    response.raise_for_status()
+
+                    mode = "ab" if resume_from else "wb"
+                    with fpath.open(mode) as fh:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if not chunk:
+                                continue
+                            fh.write(chunk)
+                            bytes_written += len(chunk)
+                return  # response body was fully consumed without error
+            except (
+                requests.ConnectionError,
+                requests.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
+                error = exc
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status not in RETRYABLE_HTTP_STATUSES:
+                    raise DownloadError(
+                        f"Download of {url} failed with non-retryable error"
+                    ) from exc
+                error = exc
+
+            if bytes_written:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+
+            if consecutive_failures > retries:
+                raise DownloadError(
+                    f"Download of {url} failed after {retries} consecutive "
+                    "attempts without progress"
+                ) from error
+
+            wait = min(
+                BACKOFF_MAX_SECONDS,
+                BACKOFF_BASE_SECONDS * 2 ** (consecutive_failures - 1),
+            )
+            wait += random.uniform(0, wait * 0.1)  # noqa: S311 (jitter, not security)
+            logger.warning(
+                f"Download of {url} interrupted ({error}), retrying in "
+                f"{wait:.1f}s from byte {resume_from}"
+            )
+            time.sleep(wait)
