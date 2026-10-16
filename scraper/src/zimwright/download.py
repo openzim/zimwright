@@ -17,15 +17,18 @@ uploads the first file it finds ending in `.zim`, so writing straight to
 `fpath` lets it grab a still-downloading, incomplete ZIM.
 
 Unlike wget, `requests` does not print its own progress, so progress is
-logged here instead, at most once every `PROGRESS_LOG_INTERVAL_SECONDS` to
-keep it from flooding the logs on a large file.
+logged here instead, at most once every `PROGRESS_INTERVAL_SECONDS` to
+keep it from flooding the logs on a large file. The same cadence drives the
+optional `on_progress` callback, used to report progress upstream.
 """
 
 import logging
 import pathlib
 import random
 import time
+from collections.abc import Callable
 
+import humanfriendly
 import requests
 
 logger = logging.getLogger(__name__)
@@ -37,8 +40,7 @@ CONNECT_TIMEOUT_SECONDS = 30
 READ_TIMEOUT_SECONDS = 60
 BACKOFF_BASE_SECONDS = 2
 BACKOFF_MAX_SECONDS = 60
-PROGRESS_LOG_INTERVAL_SECONDS = 30
-BYTES_PER_MIB = 1024 * 1024
+PROGRESS_INTERVAL_SECONDS = 30
 
 
 class DownloadError(Exception):
@@ -57,14 +59,13 @@ def _get_total_size(response: requests.Response, resume_from: int) -> int | None
 def _log_progress(url: str, downloaded: int, total_size: int | None) -> None:
     """Log how much of the file has been downloaded so far."""
 
-    downloaded_mib = downloaded / BYTES_PER_MIB
+    downloaded_str = humanfriendly.format_size(downloaded, binary=True)
     if total_size:
         logger.info(
-            f"Downloaded {downloaded_mib:.1f} MiB "
-            f"({downloaded / total_size:.0%}) of {url}"
+            f"Downloaded {downloaded_str} ({downloaded / total_size:.0%}) of {url}"
         )
     else:
-        logger.info(f"Downloaded {downloaded_mib:.1f} MiB of {url}")
+        logger.info(f"Downloaded {downloaded_str} of {url}")
 
 
 def save_large_file(
@@ -72,6 +73,7 @@ def save_large_file(
     fpath: pathlib.Path,
     retries: int = 5,
     user_agent: str | None = None,
+    on_progress: Callable[[int, int | None], None] | None = None,
 ) -> None:
     """Download a binary file from its URL, streaming it with resume support.
 
@@ -80,6 +82,10 @@ def save_large_file(
     `Range` request. `retries` is the number of consecutive attempts that may
     fail *without making any progress* before giving up; an attempt that
     writes at least one byte resets this counter.
+
+    `on_progress`, if given, is called at the same pace as the progress log
+    (at most once every `PROGRESS_INTERVAL_SECONDS`) with the number of bytes
+    downloaded so far and the total size, when known.
     """
 
     headers = {"User-Agent": user_agent} if user_agent else {}
@@ -124,10 +130,11 @@ def save_large_file(
                             bytes_written += len(chunk)
 
                             now = time.monotonic()
-                            if now - last_logged_at >= PROGRESS_LOG_INTERVAL_SECONDS:
-                                _log_progress(
-                                    url, resume_from + bytes_written, total_size
-                                )
+                            if now - last_logged_at >= PROGRESS_INTERVAL_SECONDS:
+                                downloaded = resume_from + bytes_written
+                                _log_progress(url, downloaded, total_size)
+                                if on_progress:
+                                    on_progress(downloaded, total_size)
                                 last_logged_at = now
                 tmp_fpath.replace(fpath)
                 return  # response body was fully consumed without error

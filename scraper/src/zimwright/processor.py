@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 from uuid import uuid4
 
-from schedule import every
 from zimscraperlib.zim.filesystem import (
     validate_file_creatable,
     validate_folder_writable,
@@ -15,8 +14,6 @@ from zimwright.download import save_large_file
 context = Context.get()
 logger = context.logger
 
-LOG_EVERY_SECONDS = 60
-
 
 class Processor:
     """Generates ZIMs based on the user's configuration."""
@@ -25,10 +22,8 @@ class Processor:
         """Initializes Processor."""
 
         self.stats_items_done = 0
-        # we add 1 more items to process so that progress is not 100% at the beginning
-        # when we do not yet know how many items we have to process and so that we can
-        # increase counter at the beginning of every for loop, not minding about what
-        # could happen in the loop in terms of exit conditions
+        # placeholder total so progress is not 100% before the download starts
+        # reporting its real size; _report_download_progress replaces it once known
         self.stats_items_total = 1
 
     def run(self) -> Path:
@@ -44,11 +39,9 @@ class Processor:
 
         logger.info("Download ZIM")
 
-        # create first progress report and and a timer to update every 10 seconds
+        # create first progress report; later ones are driven by the download
+        # itself, since it is the only long-running operation
         self._report_progress()
-        every(10).seconds.do(  # pyright: ignore[reportUnknownMemberType]
-            self._report_progress
-        )
 
         logger.debug(f"User-Agent: {context.wm_user_agent}")
 
@@ -62,14 +55,26 @@ class Processor:
             context.download_from,
             fpath=zim_path,
             user_agent=context.wm_user_agent,
+            on_progress=self._report_download_progress,
         )
 
-        # same reason than self.stats_items_done = 1 at the beginning, we need to add
-        # a final item to complete the progress
-        self.stats_items_done += 1
+        # mark as fully done, whether progress was tracked in bytes (download
+        # reported its size) or not (stats_items_total is still the initial 1)
+        self.stats_items_done = self.stats_items_total
         self._report_progress()
 
         return zim_path
+
+    def _report_download_progress(
+        self, downloaded: int, total_size: int | None
+    ) -> None:
+        """relay the download's own progress to the stats file"""
+
+        if not total_size:
+            return
+        self.stats_items_done = downloaded
+        self.stats_items_total = total_size
+        self._report_progress()
 
     def _report_progress(self):
         """report progress to stats file"""

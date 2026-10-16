@@ -160,6 +160,28 @@ def test_save_large_file_logs_progress_periodically(
     assert "67%" in progress_logs[0]
 
 
+def test_save_large_file_calls_on_progress_at_the_same_pace_as_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """on_progress is invoked at the same ticks as the progress log, with
+    the bytes downloaded so far and the total size."""
+
+    chunks = [b"a" * 1024, b"b" * 1024, b"c" * 1024]
+    get_mock = MagicMock(
+        return_value=FakeResponse(200, chunks, content_length=sum(map(len, chunks)))
+    )
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+    monkeypatch.setattr(
+        "zimwright.download.time.monotonic", MagicMock(side_effect=[0, 10, 40, 41])
+    )
+
+    on_progress = MagicMock()
+    fpath = tmp_path / "out.zim"
+    save_large_file("https://example.com/file.zim", fpath, on_progress=on_progress)
+
+    on_progress.assert_called_once_with(2048, 3072)
+
+
 def test_save_large_file_retries_on_retryable_http_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
