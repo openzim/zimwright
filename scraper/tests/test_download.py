@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -16,10 +17,16 @@ class FakeResponse:
         status_code: int,
         chunks: list[bytes] | None = None,
         raise_while_streaming: Exception | None = None,
+        content_length: int | None = None,
     ) -> None:
         self.status_code = status_code
         self._chunks = chunks or []
         self._raise_while_streaming = raise_while_streaming
+        self.headers = (
+            {"Content-Length": str(content_length)}
+            if content_length is not None
+            else {}
+        )
 
     def __enter__(self) -> FakeResponse:
         return self
@@ -51,6 +58,7 @@ def test_save_large_file_single_attempt(
     save_large_file("https://example.com/file.zim", fpath, user_agent="some-agent")
 
     assert fpath.read_bytes() == b"hello world"
+    assert not fpath.with_name("out.zim.part").exists()
     _args, kwargs = get_mock.call_args
     assert kwargs["headers"] == {"User-Agent": "some-agent"}
     assert "Range" not in kwargs["headers"]
@@ -95,6 +103,85 @@ def test_save_large_file_resumes_after_connection_error(
     assert second_call_headers["Range"] == "bytes=6-"
 
 
+def test_save_large_file_does_not_expose_incomplete_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The final path only appears once the download is complete: a worker
+    watching the output folder for a `*.zim` file must never see a partial
+    one under that name."""
+
+    responses = [
+        FakeResponse(
+            200,
+            [b"hello "],
+            raise_while_streaming=requests.ConnectionError("dropped"),
+        ),
+        FakeResponse(206, [b"world"]),
+    ]
+    get_mock = MagicMock(side_effect=responses)
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+
+    def fake_sleep(_seconds: float) -> None:
+        assert not fpath.exists()
+        assert fpath.with_name("out.zim.part").read_bytes() == b"hello "
+
+    monkeypatch.setattr("zimwright.download.time.sleep", fake_sleep)
+
+    fpath = tmp_path / "out.zim"
+    save_large_file("https://example.com/file.zim", fpath)
+
+    assert fpath.read_bytes() == b"hello world"
+    assert not fpath.with_name("out.zim.part").exists()
+
+
+def test_save_large_file_logs_progress_periodically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Progress is logged at most once per PROGRESS_LOG_INTERVAL_SECONDS, not
+    once per chunk, and includes the percentage when the size is known."""
+
+    chunks = [b"a" * 1024, b"b" * 1024, b"c" * 1024]
+    get_mock = MagicMock(
+        return_value=FakeResponse(200, chunks, content_length=sum(map(len, chunks)))
+    )
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+    # one call before the loop, then one per chunk: only the 2nd chunk
+    # crosses the 30s interval since the previous log.
+    monkeypatch.setattr(
+        "zimwright.download.time.monotonic", MagicMock(side_effect=[0, 10, 40, 41])
+    )
+
+    fpath = tmp_path / "out.zim"
+    with caplog.at_level(logging.INFO, logger="zimwright.download"):
+        save_large_file("https://example.com/file.zim", fpath)
+
+    progress_logs = [r.message for r in caplog.records if "Downloaded" in r.message]
+    assert len(progress_logs) == 1
+    assert "67%" in progress_logs[0]
+
+
+def test_save_large_file_calls_on_progress_at_the_same_pace_as_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """on_progress is invoked at the same ticks as the progress log, with
+    the bytes downloaded so far and the total size."""
+
+    chunks = [b"a" * 1024, b"b" * 1024, b"c" * 1024]
+    get_mock = MagicMock(
+        return_value=FakeResponse(200, chunks, content_length=sum(map(len, chunks)))
+    )
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+    monkeypatch.setattr(
+        "zimwright.download.time.monotonic", MagicMock(side_effect=[0, 10, 40, 41])
+    )
+
+    on_progress = MagicMock()
+    fpath = tmp_path / "out.zim"
+    save_large_file("https://example.com/file.zim", fpath, on_progress=on_progress)
+
+    on_progress.assert_called_once_with(2048, 3072)
+
+
 def test_save_large_file_retries_on_retryable_http_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -116,7 +203,7 @@ def test_save_large_file_restarts_when_server_ignores_range(
     """If the server replies 200 (not 206) to a Range request, start over."""
 
     fpath = tmp_path / "out.zim"
-    fpath.write_bytes(b"stale-partial-data")
+    fpath.with_name("out.zim.part").write_bytes(b"stale-partial-data")
 
     get_mock = MagicMock(return_value=FakeResponse(200, [b"fresh"]))
     monkeypatch.setattr(requests.Session, "get", get_mock)

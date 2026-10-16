@@ -8,8 +8,8 @@ requires-python = ">=3.14,<3.15"
 description = "Download ZIM file to push to Zimfarm"
 dependencies = [
   "zimscraperlib==5.4.1",
-  "schedule==1.2.2",
   "requests==2.32.3",
+  "humanfriendly==10.0",
 ]
 dynamic = ["authors", "classifiers", "keywords", "license", "version", "urls", "readme"]
 
@@ -23,7 +23,8 @@ readme = "../README.md"
 scripts = ["invoke==3.0.3"]
 qa = [
   "ruff==0.16.1",
-  "pyright==1.1.411"
+  "pyright==1.1.411",
+  "types-humanfriendly==10.0.1.20250319"
 ]
 test = ["pytest==9.1.1", "coverage==7.15.3"]
 dev = [
