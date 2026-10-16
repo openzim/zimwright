@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -16,10 +17,16 @@ class FakeResponse:
         status_code: int,
         chunks: list[bytes] | None = None,
         raise_while_streaming: Exception | None = None,
+        content_length: int | None = None,
     ) -> None:
         self.status_code = status_code
         self._chunks = chunks or []
         self._raise_while_streaming = raise_while_streaming
+        self.headers = (
+            {"Content-Length": str(content_length)}
+            if content_length is not None
+            else {}
+        )
 
     def __enter__(self) -> FakeResponse:
         return self
@@ -125,6 +132,32 @@ def test_save_large_file_does_not_expose_incomplete_file(
 
     assert fpath.read_bytes() == b"hello world"
     assert not fpath.with_name("out.zim.part").exists()
+
+
+def test_save_large_file_logs_progress_periodically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Progress is logged at most once per PROGRESS_LOG_INTERVAL_SECONDS, not
+    once per chunk, and includes the percentage when the size is known."""
+
+    chunks = [b"a" * 1024, b"b" * 1024, b"c" * 1024]
+    get_mock = MagicMock(
+        return_value=FakeResponse(200, chunks, content_length=sum(map(len, chunks)))
+    )
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+    # one call before the loop, then one per chunk: only the 2nd chunk
+    # crosses the 30s interval since the previous log.
+    monkeypatch.setattr(
+        "zimwright.download.time.monotonic", MagicMock(side_effect=[0, 10, 40, 41])
+    )
+
+    fpath = tmp_path / "out.zim"
+    with caplog.at_level(logging.INFO, logger="zimwright.download"):
+        save_large_file("https://example.com/file.zim", fpath)
+
+    progress_logs = [r.message for r in caplog.records if "Downloaded" in r.message]
+    assert len(progress_logs) == 1
+    assert "67%" in progress_logs[0]
 
 
 def test_save_large_file_retries_on_retryable_http_status(

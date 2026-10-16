@@ -15,6 +15,10 @@ The download is also written to a `.part` sibling file and only moved to
 `fpath` once complete: the Zimfarm worker watches the output folder and
 uploads the first file it finds ending in `.zim`, so writing straight to
 `fpath` lets it grab a still-downloading, incomplete ZIM.
+
+Unlike wget, `requests` does not print its own progress, so progress is
+logged here instead, at most once every `PROGRESS_LOG_INTERVAL_SECONDS` to
+keep it from flooding the logs on a large file.
 """
 
 import logging
@@ -33,10 +37,34 @@ CONNECT_TIMEOUT_SECONDS = 30
 READ_TIMEOUT_SECONDS = 60
 BACKOFF_BASE_SECONDS = 2
 BACKOFF_MAX_SECONDS = 60
+PROGRESS_LOG_INTERVAL_SECONDS = 30
+BYTES_PER_MIB = 1024 * 1024
 
 
 class DownloadError(Exception):
     """Raised when a download fails and cannot be retried any further."""
+
+
+def _get_total_size(response: requests.Response, resume_from: int) -> int | None:
+    """Total size of the file being downloaded, if the server reports it."""
+
+    content_length = response.headers.get("Content-Length")
+    if content_length is None:
+        return None
+    return resume_from + int(content_length)
+
+
+def _log_progress(url: str, downloaded: int, total_size: int | None) -> None:
+    """Log how much of the file has been downloaded so far."""
+
+    downloaded_mib = downloaded / BYTES_PER_MIB
+    if total_size:
+        logger.info(
+            f"Downloaded {downloaded_mib:.1f} MiB "
+            f"({downloaded / total_size:.0%}) of {url}"
+        )
+    else:
+        logger.info(f"Downloaded {downloaded_mib:.1f} MiB of {url}")
 
 
 def save_large_file(
@@ -84,6 +112,9 @@ def save_large_file(
 
                     response.raise_for_status()
 
+                    total_size = _get_total_size(response, resume_from)
+                    last_logged_at = time.monotonic()
+
                     mode = "ab" if resume_from else "wb"
                     with tmp_fpath.open(mode) as fh:
                         for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
@@ -91,6 +122,13 @@ def save_large_file(
                                 continue
                             fh.write(chunk)
                             bytes_written += len(chunk)
+
+                            now = time.monotonic()
+                            if now - last_logged_at >= PROGRESS_LOG_INTERVAL_SECONDS:
+                                _log_progress(
+                                    url, resume_from + bytes_written, total_size
+                                )
+                                last_logged_at = now
                 tmp_fpath.replace(fpath)
                 return  # response body was fully consumed without error
             except (
