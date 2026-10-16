@@ -10,6 +10,11 @@ Here, the retry counter only accumulates on attempts that make *no* progress
 at all. Any attempt that receives at least one byte resets it, since it
 proves the connection and the HTTP range resume are both working, so a
 flaky-but-advancing download is never abandoned early.
+
+The download is also written to a `.part` sibling file and only moved to
+`fpath` once complete: the Zimfarm worker watches the output folder and
+uploads the first file it finds ending in `.zim`, so writing straight to
+`fpath` lets it grab a still-downloading, incomplete ZIM.
 """
 
 import logging
@@ -51,10 +56,11 @@ def save_large_file(
 
     headers = {"User-Agent": user_agent} if user_agent else {}
     consecutive_failures = 0
+    tmp_fpath = fpath.with_name(fpath.name + ".part")
 
     with requests.Session() as session:
         while True:
-            resume_from = fpath.stat().st_size if fpath.exists() else 0
+            resume_from = tmp_fpath.stat().st_size if tmp_fpath.exists() else 0
             request_headers = dict(headers)
             if resume_from:
                 request_headers["Range"] = f"bytes={resume_from}-"
@@ -73,18 +79,19 @@ def save_large_file(
                             f"{url} does not support resuming downloads, "
                             "restarting from scratch"
                         )
-                        fpath.unlink(missing_ok=True)
+                        tmp_fpath.unlink(missing_ok=True)
                         resume_from = 0
 
                     response.raise_for_status()
 
                     mode = "ab" if resume_from else "wb"
-                    with fpath.open(mode) as fh:
+                    with tmp_fpath.open(mode) as fh:
                         for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                             if not chunk:
                                 continue
                             fh.write(chunk)
                             bytes_written += len(chunk)
+                tmp_fpath.replace(fpath)
                 return  # response body was fully consumed without error
             except (
                 requests.ConnectionError,
