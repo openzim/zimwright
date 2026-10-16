@@ -74,7 +74,11 @@ class Processor:
     def _report_progress(self):
         """report progress to stats file"""
 
-        logger.info(f"  Progress {self.stats_items_done} / {self.stats_items_total}")
+        percentage = self.stats_items_done / self.stats_items_total * 100
+        logger.info(
+            f"  Progress {self.stats_items_done} / {self.stats_items_total}"
+            f" ({percentage:.0f}%)"
+        )
         if not context.stats_filename:
             return
         progress = {
